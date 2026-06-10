@@ -232,7 +232,13 @@ void NetworkManagerClient::sendMessage(const std::string& message)
         std::string target = message.substr(3, space - 3);
         std::string body   = message.substr(space + 1);
 
-        shared_.chatHistory[target].push_back({
+        std::string displayName = target;
+        auto it = shared_.idToUsername.find(target);
+        if (it != shared_.idToUsername.end()) {
+            displayName = it->second;
+        }
+
+        shared_.chatHistory[displayName].push_back({
             "You", body, ts, true
         });
     }
