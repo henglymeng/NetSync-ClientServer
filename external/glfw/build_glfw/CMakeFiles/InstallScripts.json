@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/Project/Radar Project/Software/external/glfw/build_glfw/cmake_install.cmake",
+		"D:/Project/Radar Project/Software/external/glfw/build_glfw/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

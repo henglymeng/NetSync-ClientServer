@@ -1,0 +1,26 @@
+# ninja log v6
+38	6432	7829993486435141	src/CMakeFiles/glfw.dir/window.c.obj	57f7371d43397039
+11	6424	7829993486157792	src/CMakeFiles/glfw.dir/context.c.obj	b6df3c9dee3953cf
+15	6324	7829993486201144	src/CMakeFiles/glfw.dir/init.c.obj	a90ed15ab46447c9
+6485	8085	7829993550918434	examples/CMakeFiles/offscreen.dir/offscreen.c.obj	53d7afef41ce8e0e
+70	6300	7829993486749911	src/CMakeFiles/glfw.dir/null_window.c.obj	35122a3272335112
+6045	12953	7829993546526166	src/CMakeFiles/glfw.dir/wgl_context.c.obj	34045abf712bb477
+65	6044	7829993486704622	src/CMakeFiles/glfw.dir/null_monitor.c.obj	fe1aebb5cf97ed28
+47	6158	7829993486532860	src/CMakeFiles/glfw.dir/egl_context.c.obj	94fa50b932d93f7c
+76	5890	7829993486815595	src/CMakeFiles/glfw.dir/null_joystick.c.obj	e8a4ff574c51c736
+81	5857	7829993486869249	src/CMakeFiles/glfw.dir/win32_module.c.obj	17f7ecf0ca54accd
+6304	7379	7829993549100689	examples/CMakeFiles/gears.dir/gears.c.obj	ca69f4bfacd43a58
+24	6033	7829993486294679	src/CMakeFiles/glfw.dir/monitor.c.obj	ba1c6383a7017f0
+6035	14029	7829993546416632	src/CMakeFiles/glfw.dir/win32_window.c.obj	6353ebecac8ff003
+5895	12923	7829993545026192	src/CMakeFiles/glfw.dir/win32_joystick.c.obj	6d0ca6cc438aa517
+6424	7442	7829993550291620	examples/CMakeFiles/heightmap.dir/heightmap.c.obj	761a4262b3e3b0da
+5879	12491	7829993544866102	src/CMakeFiles/glfw.dir/win32_init.c.obj	62262d7edc4831c
+5827	12114	7829993544376936	src/CMakeFiles/glfw.dir/win32_time.c.obj	7fc01756c3803cbb
+5946	12641	7829993545547014	src/CMakeFiles/glfw.dir/win32_monitor.c.obj	c9d51575e6090dda
+6158	7433	7829993547636942	examples/CMakeFiles/boing.dir/boing.c.obj	ee757e4064e0e6b7
+28	5820	7829993486330302	src/CMakeFiles/glfw.dir/platform.c.obj	6c2afdfcdfeb3adc
+54	5945	7829993486586478	src/CMakeFiles/glfw.dir/osmesa_context.c.obj	4921d6262eed7673
+5860	12229	7829993544679052	src/CMakeFiles/glfw.dir/win32_thread.c.obj	e0a8f7a7f9c61c3f
+20	6483	7829993486259041	src/CMakeFiles/glfw.dir/input.c.obj	558587064c6b6555
+32	5872	7829993486378625	src/CMakeFiles/glfw.dir/vulkan.c.obj	5ac61a3a86717879
+59	6201	7829993486646754	src/CMakeFiles/glfw.dir/null_init.c.obj	55939920a19d867c

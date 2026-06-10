@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/RUPP/RUPP/RUPP Y3S2/Network Programming/Finalproject/build/cmake_install.cmake",
+		"D:/RUPP/RUPP/RUPP Y3S2/Network Programming/Finalproject/build/external/matplotplusplus/cmake_install.cmake",
+		"D:/RUPP/RUPP/RUPP Y3S2/Network Programming/Finalproject/build/external/matplotplusplus/source/cmake_install.cmake",
+		"D:/RUPP/RUPP/RUPP Y3S2/Network Programming/Finalproject/build/external/matplotplusplus/source/3rd_party/cmake_install.cmake",
+		"D:/RUPP/RUPP/RUPP Y3S2/Network Programming/Finalproject/build/external/matplotplusplus/source/matplot/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
