@@ -73,7 +73,7 @@ void GUI(SharedData& shared, NetworkManager& networkManager)
     int winY = monY + (monH - winH) / 2;
 
     GLFWwindow* window = glfwCreateWindow(
-        winW, winH, "NetSync — Server", nullptr, nullptr);
+        winW, winH, "NetSync - Server", nullptr, nullptr);
     if (!window) { glfwTerminate(); return; }
 
     glfwSetWindowPos(window, winX, winY);
@@ -178,7 +178,7 @@ void RenderUI(SharedData& shared, NetworkManager& networkManager)
     bool running = shared.running.load();
 
     //------------------------------------------------
-    // DOCKSPACE HOST — covers full viewport
+    // DOCKSPACE HOST - covers full viewport
     //------------------------------------------------
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
@@ -213,7 +213,7 @@ void RenderUI(SharedData& shared, NetworkManager& networkManager)
         if (ImGui::BeginMenu("Network"))
         {
             ImGui::MenuItem(
-                running ? "● Running" : "○ Stopped",
+                running ? "* Running" : "* Stopped",
                 nullptr, false, false
             );
             ImGui::EndMenu();
@@ -296,7 +296,7 @@ void RenderUI(SharedData& shared, NetworkManager& networkManager)
         // ── Status indicator ──────────────────────────────────────
         ImGui::TextColored(
             running ? ImVec4(0,1,0,1) : ImVec4(1,0.3f,0.3f,1),
-            running ? "● Running" : "● Stopped"
+            running ? "* Running" : "* Stopped"
         );
 
         if (running)
@@ -320,7 +320,7 @@ void RenderUI(SharedData& shared, NetworkManager& networkManager)
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ── IP + Port — only editable when stopped ────────────────
+        // ── IP + Port - only editable when stopped ────────────────
         static char bindIP[64] = "0.0.0.0";
         static int  bindPort   = 9000;
         static char errorMsg[128] = {};

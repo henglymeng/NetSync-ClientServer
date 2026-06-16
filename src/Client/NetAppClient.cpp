@@ -64,7 +64,7 @@ void GUIClient(SharedDataClient& shared, NetworkManagerClient& network)
     int winY = monY + (monH - winH) / 2;
 
     GLFWwindow* window = glfwCreateWindow(
-        winW, winH, "NetSync — Client", nullptr, nullptr);
+        winW, winH, "NetSync - Client", nullptr, nullptr);
     if (!window) { glfwTerminate(); return; }
 
     glfwSetWindowPos(window, winX, winY);
@@ -143,7 +143,7 @@ void GUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 // ─────────────────────────────────────────────────────────────────
 void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 {
-    // ── ONE snapshot block — all locals updated together ──────────
+    // ── ONE snapshot block - all locals updated together ──────────
     static std::map<std::string, std::vector<ChatMessage>> localChat;
     static std::vector<ReceivedMessage>       localLog;
     static std::vector<float>                 localPlot;
@@ -197,7 +197,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
         }
         if (ImGui::BeginMenu("Network"))
         {
-            ImGui::MenuItem(connected ? "● Connected" : "○ Disconnected", nullptr, false, false);
+            ImGui::MenuItem(connected ? "* Connected" : "* Disconnected", nullptr, false, false);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View"))
@@ -249,7 +249,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
     // CONTROL PANEL
     //------------------------------------------------
     ImGui::Begin("Control Panel");
-        ImGui::TextColored(connected ? ImVec4(0,1,0,1) : ImVec4(1,0.3f,0.3f,1), connected ? "● Connected" : "● Disconnected");
+        ImGui::TextColored(connected ? ImVec4(0,1,0,1) : ImVec4(1,0.3f,0.3f,1), connected ? "* Connected" : "* Disconnected");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -373,22 +373,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Direct chat with %s", key.c_str());
             }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Online Users Action Trigger Item
-            {
-                bool sel = (activeChat == "__LIST__");
-                if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.25f, 0.30f, 1.0f));
-
-                if (ImGui::Button("Online Users", ImVec2(-1, 0))) {
-                    activeChat = "__LIST__";
-                    network.sendWho();
-                }
-                if (sel) ImGui::PopStyleColor();
-            }
+            
         ImGui::EndChild();
         
         ImGui::SameLine();
@@ -400,13 +385,13 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
             std::string subHeader = "";
 
             if (activeChat == "ALL") {
-                headerTitle = "Broadcast — ALL";
+                headerTitle = "Broadcast - ALL";
                 subHeader = "Broadcast to all connected users";
             } else if (activeChat == "__LIST__") {
                 headerTitle = "Connected Users";
                 subHeader = "Global network directory listing";
             } else {
-                headerTitle = "Direct — " + activeChat;
+                headerTitle = "Direct - " + activeChat;
                 subHeader = "Private conversation with " + activeChat;
             }
 
@@ -570,6 +555,14 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
             ImGui::BeginDisabled(!canSend);
 
+                // Who button to show active users in the current thread (for future group chat support)
+                if (ImGui::Button("WHO", ImVec2(40, 0)))
+                {
+                    network.sendWho();
+                }
+
+                ImGui::SameLine();
+
                 // File Attachment Button Component
                 if (ImGui::Button("image", ImVec2(40, 0)))
                 {
@@ -580,13 +573,13 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
                     ofn.lpstrFile = fileDest;
                     ofn.nMaxFile = sizeof(fileDest);
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
+                    
                     if (GetOpenFileNameA(&ofn))
                     {
                         network.sendImage(std::string(fileDest));
                     }
                 }
-
+                
                 ImGui::SameLine();
 
                 // Auto-calculate exact space remaining for input and send actions
