@@ -32,7 +32,7 @@ static void forwardTo(int targetID, int senderID,
 {
     // Appends internal system formatting + the required packet boundary delimiter
     std::string payload = "[Client #" + std::to_string(senderID)
-                        + " → You] " + message + "\n";
+                        + " -> You] " + message + "\n";
 
     for (const auto& c : shared.clientList)
     {
@@ -171,7 +171,7 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                             c.username = newName;
                             shared.messageLog.push_back(
                                 "[~] Client #" + std::to_string(clientID)
-                                + " renamed: " + old + " → " + newName
+                                + " renamed: " + old + " -> " + newName
                             );
                             break;
                         }
@@ -211,7 +211,7 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 if (target == "ALL")
                 {
                     std::lock_guard<std::mutex> lock(shared.mtx);
-                    std::string fwd = "[Client #" + std::to_string(clientID) + " → ALL] " + payload + "\n";
+                    std::string fwd = "[Client #" + std::to_string(clientID) + " -> ALL] " + payload + "\n";
 
                     for (const auto& c : shared.clientList)
                     {
@@ -219,7 +219,7 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                         ::send(c.sock, fwd.c_str(), static_cast<int>(fwd.size()), 0);
                     }
 
-                    shared.messageLog.push_back("[RELAY ALL] #" + std::to_string(clientID) + " → ALL: " + payload);
+                    shared.messageLog.push_back("[RELAY ALL] #" + std::to_string(clientID) + " -> ALL: " + payload);
                     shared.newDataReady = true;
                 }
                 else if (target[0] == '#')
@@ -229,7 +229,7 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                         std::lock_guard<std::mutex> lock(shared.mtx);
                         forwardTo(targetID, clientID, payload, shared);
 
-                        shared.messageLog.push_back("[RELAY] #" + std::to_string(clientID) + " → #" + std::to_string(targetID) + ": " + payload);
+                        shared.messageLog.push_back("[RELAY] #" + std::to_string(clientID) + " -> #" + std::to_string(targetID) + ": " + payload);
                         shared.newDataReady = true;
                     }
                     catch(...) {
@@ -267,8 +267,8 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                     }
                 }
 
-                // Format it so the client's "→ ALL]" parser catches it flawlessly
-                std::string broadcastPayload = "[" + senderName + " → ALL] " + msg + "\n";
+                // Format it so the client's "-> ALL]" parser catches it flawlessly
+                std::string broadcastPayload = "[" + senderName + " -> ALL] " + msg + "\n";
 
                 // Loop through and relay it to ALL connected clients (including/excluding sender as preferred)
                 for (const auto& c : shared.clientList)

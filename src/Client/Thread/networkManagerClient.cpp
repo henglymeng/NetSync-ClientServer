@@ -57,8 +57,8 @@ void NetworkManagerClient::recvThread()
                 std::lock_guard<std::mutex> lock(shared_.mtx);
                 shared_.messageLog.push_back({ "[Server] " + raw, ts });
 
-                // DM received: "[Client #N → You] body"
-                if (raw.find("→ You]") != std::string::npos)
+                // DM received: "[Client #N -> You] body"
+                if (raw.find("-> You]") != std::string::npos)
                 {
                     size_t hash  = raw.find('#');
                     size_t space = raw.find(' ', hash);
@@ -78,8 +78,8 @@ void NetworkManagerClient::recvThread()
                         shared_.chatHistory[senderName].push_back({ senderName, body, ts, false });
                     }
                 }
-                // Broadcast received: "[Client #N → ALL] body"
-                else if (raw.find("→ ALL]") != std::string::npos)
+                // Broadcast received: "[Client #N -> ALL] body"
+                else if (raw.find("-> ALL]") != std::string::npos)
                 {
                     size_t hash  = raw.find('#');
                     size_t space = raw.find(' ', hash);

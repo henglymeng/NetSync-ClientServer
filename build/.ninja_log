@@ -155,3 +155,10 @@
 8071	8391	8033063266779950	NetAppClient.exe	c6d835c9d97ecfae
 48	7514	8033063443018338	CMakeFiles/NetAppClient.dir/src/Client/NetAppClient.cpp.obj	d594e75e37b3c04d
 7515	7877	8033063517695727	NetAppClient.exe	c6d835c9d97ecfae
+285	15328	8033751985129781	CMakeFiles/NetAppServer.dir/src/Server/Thread/workerThread.cpp.obj	e1bccdc10adf5af7
+305	15672	8033751985369557	CMakeFiles/NetAppClient.dir/src/Client/NetAppClient.cpp.obj	d594e75e37b3c04d
+15330	16315	8033752135608998	NetAppServer.exe	e62693dd9b421af6
+316	17230	8033751985471591	CMakeFiles/NetAppClient.dir/src/Client/Thread/networkManagerClient.cpp.obj	9f7acf35ddaea2c2
+17232	17732	8033752154628421	NetAppClient.exe	c6d835c9d97ecfae
+66	17399	8033755082699167	CMakeFiles/NetAppClient.dir/src/Client/Thread/networkManagerClient.cpp.obj	9f7acf35ddaea2c2
+17401	17942	8033755256081789	NetAppClient.exe	c6d835c9d97ecfae
