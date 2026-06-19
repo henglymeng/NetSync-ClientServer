@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 
 #define BUFSIZE 512
@@ -126,10 +127,19 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 const uint8_t* rawBinaryDataPtr = reinterpret_cast<const uint8_t*>(accumulationBuffer.data() + headerTotalLength);
                 std::vector<uint8_t> fileData(rawBinaryDataPtr, rawBinaryDataPtr + fileSize);
 
-                // ── [OPTIONAL] Process/Save Binary File Data ──────────────────
-                // std::ofstream outfile(filename, std::ios::binary);
-                // outfile.write(reinterpret_cast<const char*>(fileData.data()), fileSize);
-                // outfile.close();
+                // Process/Save Binary File Data ──────────────────
+                std::filesystem::create_directories("Images");
+
+                std::ofstream outfile(
+                    std::filesystem::path("Images") / filename, 
+                    std::ios::binary);
+
+                outfile.write(
+                    reinterpret_cast<const char*>(fileData.data()), 
+                    static_cast<std::streamsize>(fileSize)
+                );
+                
+                outfile.close();
 
                 // Drop both text header and binary block from the stream buffer entirely
                 accumulationBuffer.erase(0, headerTotalLength + fileSize);
