@@ -585,28 +585,5 @@ void RenderUI(SharedData& shared, NetworkManager& networkManager)
                 ImGui::SetScrollHereY(1.0f);
 
         ImGui::EndChild();
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::Text("Send Broadcast Message:");
-
-        static char sendBuf[512] = {};
-
-        ImGui::SetNextItemWidth(
-            ImGui::GetContentRegionAvail().x - 80);
-        bool hitEnter = ImGui::InputText(
-            "##input", sendBuf, sizeof(sendBuf),
-            ImGuiInputTextFlags_EnterReturnsTrue
-        );
-        ImGui::SameLine();
-        bool hitSend = ImGui::Button("Send", ImVec2(70, 0));
-
-        if ((hitEnter || hitSend) && sendBuf[0] != '\0')
-        {
-            networkManager.broadCasting(std::string(sendBuf));
-            sendBuf[0] = '\0';
-            ImGui::SetKeyboardFocusHere(-1);
-        }
-
     ImGui::End();
 }

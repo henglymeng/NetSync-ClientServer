@@ -25,8 +25,13 @@ void acceptThread(SOCKET listen_sock, SharedData& shared)
 
         if (client_sock == INVALID_SOCKET)
         {
-            fprintf(stderr, "[acceptThread] accept() failed: %d\n",
+            if (!shared.running)
+                break;
+
+            fprintf(stderr,
+                    "[acceptThread] accept() failed: %d\n",
                     WSAGetLastError());
+
             continue;
         }
 

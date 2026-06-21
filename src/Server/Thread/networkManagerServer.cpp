@@ -86,14 +86,25 @@ void NetworkManager::start(const std::string& ip, int port)
 // ── Stop ──────────────────────────────────────────────────────────
 void NetworkManager::stop()
 {
-    if (!shared_.running) return;
-
     shared_.running = false;
 
+    // Stop accepting new clients
     if (listen_sock_ != INVALID_SOCKET)
     {
+        shutdown(listen_sock_, SD_BOTH);
         closesocket(listen_sock_);
         listen_sock_ = INVALID_SOCKET;
+    }
+
+    // Disconnect all clients
+    {
+        std::lock_guard<std::mutex> lock(shared_.mtx);
+
+        for (auto& c : shared_.clientList)
+        {
+            shutdown(c.sock, SD_BOTH);
+            closesocket(c.sock);
+        }
     }
 
     if (accept_thread_.joinable())
@@ -102,14 +113,17 @@ void NetworkManager::stop()
     if (packet_counter_thread_.joinable())
         packet_counter_thread_.join();
 
+    std::vector<std::thread> workers;
+
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
-        for (auto& t : shared_.workerThreads)
-        {
-            if (t.joinable())
-                t.join();
-        }
-        shared_.workerThreads.clear();
+        workers.swap(shared_.workerThreads);
+    }
+
+    for (auto& t : workers)
+    {
+        if (t.joinable())
+            t.join();
     }
 
     printf("[NetworkManager] Stopped.\n");

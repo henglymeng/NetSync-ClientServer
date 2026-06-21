@@ -277,6 +277,7 @@ void NetworkManagerClient::recvThread()
     shared_.connected = false;
     if (shared_.sock != INVALID_SOCKET)
     {
+        shutdown(shared_.sock, SD_BOTH);
         closesocket(shared_.sock);
         shared_.sock = INVALID_SOCKET;
     }
