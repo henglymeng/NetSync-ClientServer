@@ -46,12 +46,20 @@ void NetworkManager::start(const std::string& ip, int port)
     if (bind(listen_sock_,
              reinterpret_cast<sockaddr*>(&addr),
              sizeof(addr)) == SOCKET_ERROR)
-        throw std::runtime_error("bind() failed: "
-            + std::to_string(WSAGetLastError()));
+    {
+        int err = WSAGetLastError();
+        closesocket(listen_sock_);
+        listen_sock_ = INVALID_SOCKET;
+        throw std::runtime_error("bind() failed: " + std::to_string(err));
+    }
 
     if (listen(listen_sock_, SOMAXCONN) == SOCKET_ERROR)
-        throw std::runtime_error("listen() failed: "
-            + std::to_string(WSAGetLastError()));
+    {
+        int err = WSAGetLastError();
+        closesocket(listen_sock_);
+        listen_sock_ = INVALID_SOCKET;
+        throw std::runtime_error("listen() failed: " + std::to_string(err));
+    }
 
     shared_.running = true;
 
@@ -94,21 +102,53 @@ void NetworkManager::stop()
     if (packet_counter_thread_.joinable())
         packet_counter_thread_.join();
 
+    {
+        std::lock_guard<std::mutex> lock(shared_.mtx);
+        for (auto& t : shared_.workerThreads)
+        {
+            if (t.joinable())
+                t.join();
+        }
+        shared_.workerThreads.clear();
+    }
+
     printf("[NetworkManager] Stopped.\n");
 }
 
-// ── Broadcast ─────────────────────────────────────────────────────
 void NetworkManager::broadCasting(const std::string& message)
 {
     std::lock_guard<std::mutex> lock(shared_.mtx);
 
     for (const auto& c : shared_.clientList)
     {
-        ::send(c.sock, message.c_str(),
-               static_cast<int>(message.size()), 0);
+        size_t totalSent = 0;
+
+        while (totalSent < message.size())
+        {
+            int sent = send(
+                c.sock,
+                message.c_str() + totalSent,
+                static_cast<int>(message.size() - totalSent),
+                0
+            );
+
+            if (sent == SOCKET_ERROR)
+            {
+                int err = WSAGetLastError();
+
+                shared_.messageLog.push_back(
+                    "[ERR] Failed to send to #" +
+                    std::to_string(c.id) +
+                    " (code " + std::to_string(err) + ")"
+                );
+
+                break;
+            }
+
+            totalSent += sent;
+        }
     }
 
-    shared_.messageLog.push_back("[BROADCAST] " + message);
     shared_.newDataReady = true;
 }
 

@@ -17,9 +17,10 @@ public:
 void connect(const std::string& ip, int port);
     void disconnect();
     void sendMessage(const std::string& message);
-    void sendImage(const std::string& filepath);
+    void sendImage(const std::string& target, const std::string& filepath);
     void setUsername(const std::string& name); 
     void sendWho    ();
+    void recvImage(const std::string& filename, size_t fileSize);
 
     bool isConnected() const { return shared_.connected.load(); }
     std::string getUsername() const { return shared_.username; }
@@ -30,5 +31,7 @@ private:
     std::thread       send_image_thread_;
 
     void recvThread();   // runs in background, feeds shared data
-    void sendImageThread(const std::string& filepath); // runs in background, sends image data
+    void sendImageThread(
+        const std::string& target, 
+        const std::string& filepath); // runs in background, sends image data
 };

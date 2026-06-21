@@ -14,6 +14,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <commdlg.h>
+#include <shellapi.h>
 
 #include "sharedData/sharedDataClient.h"
 #include "Thread/networkManagerClient.h"
@@ -163,6 +164,13 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
     // Note: Bind these to your network packet parser in production
     static std::map<std::string, int> unreadCount; 
     static std::map<std::string, bool> isTyping;   
+
+    // parser
+    // A parser is a software component that breaks unstructured or semi-structured data 
+    // (like raw text, code, or a stream of symbols) into smaller,
+    //  manageable pieces based on a set of grammatical rules. 
+    //  It translates these pieces into a structured format, 
+    //  such as a tree structure, so that a computer can understand and process them.
 
     //------------------------------------------------
     // DOCKSPACE HOST
@@ -326,7 +334,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
         // ── LEFT: Contact list ──────────────────────────────────────────
         ImGui::BeginChild("##contacts", ImVec2(contactW, ImGui::GetContentRegionAvail().y), true);
 
-            int totalThreads = (int)localChat.size() - (localChat.count("__LIST__") ? 1 : 0);
+            int totalThreads = (int)localChat.size() - (localChat.count("LIST") ? 1 : 0);
             ImGui::Text("Contacts (%d)", std::max(0, totalThreads));
             ImGui::Separator();
             ImGui::Spacing();
@@ -355,7 +363,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
             // Per-client Active Tabs
             for (const auto& [key, msgs] : localChat)
             {
-                if (key == "ALL" || key == "__LIST__") continue;
+                if (key == "ALL" || key == "LIST") continue;
 
                 bool sel = (activeChat == key);
                 if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.40f, 0.75f, 1.0f));
@@ -387,7 +395,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
             if (activeChat == "ALL") {
                 headerTitle = "Broadcast - ALL";
                 subHeader = "Broadcast to all connected users";
-            } else if (activeChat == "__LIST__") {
+            } else if (activeChat == "LIST") {
                 headerTitle = "Connected Users";
                 subHeader = "Global network directory listing";
             } else {
@@ -397,7 +405,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s", headerTitle.c_str());
             ImGui::SameLine();
-            if (localChat.count(activeChat) && activeChat != "__LIST__") {
+            if (localChat.count(activeChat) && activeChat != "LIST") {
                 ImGui::TextDisabled("  %zu messages", localChat[activeChat].size());
             }
             
@@ -411,7 +419,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
             ImGui::BeginChild("##msgs", ImVec2(0, ImGui::GetContentRegionAvail().y - reservedSpace), false);
             
-            if (activeChat == "__LIST__")
+            if (activeChat == "LIST")
             {
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "Online Users Directory");
                 ImGui::Separator();
@@ -419,7 +427,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
                 for (const auto& [name, msgs] : localChat)
                 {
-                    if (name == "ALL" || name == "__LIST__") continue;
+                    if (name == "ALL" || name == "LIST") continue;
 
                     if (ImGui::Selectable(name.c_str())) {
                         activeChat = name;
@@ -471,9 +479,35 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
                         ImGui::BeginChild(("b_own_" + std::to_string(i)).c_str(), ImVec2(boxW, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
                             
                             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + boxW - (paddingX * 2.0f));
+
+                            if (cm.isImage)
+                            {
+                                ImGui::TextColored(ImVec4(0.8f, 0.5f, 1, 1),
+                                    "%s", cm.body.c_str());
+
+                                if (ImGui::SmallButton(("Open##" + std::to_string(i)).c_str()))
+                                {
+                                    HINSTANCE result = ShellExecuteA(nullptr, "open",
+                                        cm.imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+
+                                    INT_PTR code = reinterpret_cast<INT_PTR>(result);
+                                    if (code <= 32)
+                                    {
+                                        std::lock_guard<std::mutex> lock(shared.mtx);
+                                        shared.messageLog.push_back({
+                                            "[ERR] Failed to open '" + cm.imagePath + "' (code " + std::to_string(code) + ")", 0.0
+                                        });
+                                        shared.newDataReady = true;
+                                    }
+                                }
+                            }
+                            else
+                            {
                                 ImGui::TextUnformatted(cm.body.c_str());
+                            }
+
                             ImGui::PopTextWrapPos();
-                            
+                                                        
                             if (timeStr[0] != '\0') {
                                 float tsWidth = ImGui::CalcTextSize(timeStr).x;
                                 ImGui::SetCursorPosX(ImGui::GetWindowWidth() - tsWidth - paddingX);
@@ -483,6 +517,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
                         ImGui::EndChild();
                         ImGui::PopStyleColor();
                     }
+
                     else if (cm.sender == "System" || cm.sender == "Server")
                     {
                         // ── CENTERED NOTIFICATION SLOTS ──
@@ -506,11 +541,42 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
                         ImGui::BeginChild(("b_in_" + std::to_string(i)).c_str(), ImVec2(boxW, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
                             
                             // Clean Username Header
-                            ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.0f, 1.0f), "%s", cm.sender.c_str());
+                            ImGui::TextColored(
+                                ImVec4(0.40f, 0.85f, 1.0f, 1.0f), 
+                                "%s", cm.sender.c_str()
+                            );
+
+                            // idToUsername[cm.sender] = cm.username;
                             ImGui::Separator();
                             
                             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + boxW - (paddingX * 2.0f));
+
+                            if (cm.isImage)
+                            {
+                                ImGui::TextColored(ImVec4(0.8f, 0.5f, 1, 1),
+                                    "%s", cm.body.c_str());
+
+                                if (ImGui::SmallButton(("Open##" + std::to_string(i)).c_str()))
+                                {
+                                    HINSTANCE result = ShellExecuteA(nullptr, "open",
+                                        cm.imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+
+                                    INT_PTR code = reinterpret_cast<INT_PTR>(result);
+                                    if (code <= 32)
+                                    {
+                                        std::lock_guard<std::mutex> lock(shared.mtx);
+                                        shared.messageLog.push_back({
+                                            "[ERR] Failed to open '" + cm.imagePath + "' (code " + std::to_string(code) + ")", 0.0
+                                        });
+                                        shared.newDataReady = true;
+                                    }
+                                }
+                            }
+                            else
+                            {
                                 ImGui::TextUnformatted(cm.body.c_str());
+                            }
+
                             ImGui::PopTextWrapPos();
                             
                             if (timeStr[0] != '\0') {
@@ -536,7 +602,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
             ImGui::Separator();
 
             // Typing Indicator Spacer
-            if (activeChat != "__LIST__" && isTyping[activeChat]) {
+            if (activeChat != "LIST" && isTyping[activeChat]) {
                 ImGui::TextDisabled("%s is typing...", activeChat.c_str());
             } else {
                 ImGui::Dummy(ImVec2(0, typingIndicatorH));
@@ -551,7 +617,7 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
 
             // ── DYNAMIC BAR INPUT SYSTEM WITH INTEGRATED FILE ATTACHMENTS ──
             static char chatBuf[512] = {};
-            bool canSend = connected && (activeChat != "__LIST__");
+            bool canSend = connected && (activeChat != "LIST");
 
             ImGui::BeginDisabled(!canSend);
 
@@ -573,10 +639,17 @@ void RenderUIClient(SharedDataClient& shared, NetworkManagerClient& network)
                     ofn.lpstrFile = fileDest;
                     ofn.nMaxFile = sizeof(fileDest);
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-                    
+                        
                     if (GetOpenFileNameA(&ofn))
                     {
-                        network.sendImage(std::string(fileDest));
+                        std::string target = activeChat;
+                        if (activeChat != "ALL")
+                        {
+                            auto it = shared.usernameToID.find(activeChat);
+                            if (it != shared.usernameToID.end())
+                                target = it->second;
+                        }
+                        network.sendImage(target, std::string(fileDest));
                     }
                 }
                 

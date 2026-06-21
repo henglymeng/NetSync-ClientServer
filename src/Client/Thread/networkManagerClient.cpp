@@ -6,9 +6,10 @@
 #include <thread>
 #include <string>
 #include <fstream>
+#include <filesystem> 
 #include <vector>
 
-#define CHUNK_SIZE 4096   // send image in 4KB chunks
+#define CHUNK_SIZE 4096 // send image in 4KB chunks
 
 // ── recvThread ────────────────────────────────────────────────────
 void NetworkManagerClient::recvThread()
@@ -33,7 +34,7 @@ void NetworkManagerClient::recvThread()
             break;
         }
 
-        shared_.byteReceived += retval;
+        shared_.byteReceived.fetch_add(retval, std::memory_order_relaxed);
 
         // Append newly received data into our stream accumulator
         accumulationBuffer.append(buf, retval);
@@ -43,64 +44,149 @@ void NetworkManagerClient::recvThread()
         while ((newlinePos = accumulationBuffer.find('\n')) != std::string::npos)
         {
             std::string raw = accumulationBuffer.substr(0, newlinePos);
+
+            // ── Incoming image relay ────────────────────────────────
+            if (raw.substr(0, 4) == "IMG:" && raw.find("IMG_ACK:") == std::string::npos)
+            {
+                size_t c1 = raw.find(':', 4);
+                size_t c2 = (c1 == std::string::npos) ? std::string::npos : raw.find(':', c1 + 1);
+                size_t c3 = (c2 == std::string::npos) ? std::string::npos : raw.find(':', c2 + 1);
+                size_t headerTotalLength = newlinePos + 1;
+
+                if (c1 == std::string::npos || c2 == std::string::npos || c3 == std::string::npos)
+                {
+                    accumulationBuffer.erase(0, headerTotalLength);
+                    continue;
+                }
+
+                std::string senderID = raw.substr(4, c1 - 4);        // "#3"
+                std::string scope = raw.substr(c1 + 1, c2 - c1 - 1); // "ALL" or "DM"
+                std::string filename = raw.substr(c2 + 1, c3 - c2 - 1);
+                size_t fileSize = 0;
+                try
+                {
+                    fileSize = std::stoull(raw.substr(c3 + 1));
+                }
+                catch (...)
+                {
+                    accumulationBuffer.erase(0, headerTotalLength);
+                    continue;
+                }
+
+                if (accumulationBuffer.size() < headerTotalLength + fileSize)
+                    break; // wait for the rest of the bytes
+
+                const uint8_t *rawPtr = reinterpret_cast<const uint8_t *>(
+                    accumulationBuffer.data() + headerTotalLength);
+                std::vector<uint8_t> fileData(rawPtr, rawPtr + fileSize);
+                accumulationBuffer.erase(0, headerTotalLength + fileSize);
+
+                std::filesystem::create_directories("received_images");
+
+                std::string relPath = "received_images/" + senderID.substr(1) + "_" + filename;
+                std::ofstream out(relPath, std::ios::binary);
+                bool saveOk = false;
+                if (out)
+                {
+                    out.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
+                    saveOk = out.good();
+                }
+                out.close();
+
+                std::string savePath = saveOk
+                    ? std::filesystem::absolute(relPath).string()
+                    : "";
+
+                double ts = std::chrono::duration<double>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+
+                std::lock_guard<std::mutex> lock(shared_.mtx);
+                std::string senderName = senderID;
+                auto it = shared_.idToUsername.find(senderID);
+                if (it != shared_.idToUsername.end())
+                    senderName = it->second;
+
+                std::string bucket = (scope == "ALL") ? "ALL" : senderName;
+
+                if (saveOk)
+                    shared_.chatHistory[bucket].push_back({ senderName, "[Image] " + filename, ts, false, true, savePath });
+                else
+                    shared_.chatHistory[bucket].push_back({ senderName, "[Image] " + filename + " (failed to save)", ts, false, false, "" });
+
+                shared_.messageLog.push_back({"[IMG] " + (saveOk ? std::string("Received ") : std::string("Failed to save ")) + filename + " from " + senderName, ts});
+                shared_.newDataReady = true;
+                continue;
+            }
+
             accumulationBuffer.erase(0, newlinePos + 1); // Remove the processed line from buffer
 
             double ts = std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count();
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
 
             float value = 0.0f;
-            try { value = std::stof(raw); }
-            catch (...) { value = static_cast<float>(raw.size()); }
+            try
+            {
+                value = std::stof(raw);
+            }
+            catch (...)
+            {
+                value = static_cast<float>(raw.size());
+            }
 
             {
                 std::lock_guard<std::mutex> lock(shared_.mtx);
-                shared_.messageLog.push_back({ "[Server] " + raw, ts });
+                shared_.messageLog.push_back({"[Server] " + raw, ts});
 
                 // DM received: "[Client #N -> You] body"
-                if (raw.find("-> You]") != std::string::npos)
+                if (raw.size() > 0 && raw.find("-> You]") != std::string::npos)
                 {
-                    size_t hash  = raw.find('#');
+                    size_t hash = raw.find('#');
                     size_t space = raw.find(' ', hash);
                     size_t brace = raw.find("] ", space);
 
-                    if (hash != std::string::npos && space != std::string::npos && brace != std::string::npos) {
+                    if (hash != std::string::npos && space != std::string::npos && brace != std::string::npos)
+                    {
                         std::string senderId = raw.substr(hash, space - hash);
-                        std::string body   = raw.substr(brace + 2);
+                        std::string body = raw.substr(brace + 2);
 
                         // Convert sender ID to username for display
                         std::string senderName = senderId;
                         auto it = shared_.idToUsername.find(senderId);
-                        if (it != shared_.idToUsername.end()) {
+                        if (it != shared_.idToUsername.end())
+                        {
                             senderName = it->second;
                         }
 
-                        shared_.chatHistory[senderName].push_back({ senderName, body, ts, false });
+                        shared_.chatHistory[senderName].push_back({senderName, body, ts, false});
                     }
                 }
                 // Broadcast received: "[Client #N -> ALL] body"
-                else if (raw.find("-> ALL]") != std::string::npos)
+                else if (raw.size() > 0 && raw.find("-> ALL]") != std::string::npos)
                 {
-                    size_t hash  = raw.find('#');
+                    size_t hash = raw.find('#');
                     size_t space = raw.find(' ', hash);
                     size_t brace = raw.find("] ", space);
 
-                    if (hash != std::string::npos && space != std::string::npos && brace != std::string::npos) {
+                    if (hash != std::string::npos && space != std::string::npos && brace != std::string::npos)
+                    {
                         std::string senderId = raw.substr(hash, space - hash);
-                        std::string body   = raw.substr(brace + 2);
+                        std::string body = raw.substr(brace + 2);
 
                         // Convert sender ID to username for display
                         std::string senderName = senderId;
                         auto it = shared_.idToUsername.find(senderId);
-                        if (it != shared_.idToUsername.end()) {
+                        if (it != shared_.idToUsername.end())
+                        {
                             senderName = it->second;
                         }
 
-                        shared_.chatHistory["ALL"].push_back({ senderName, body, ts, false });
+                        shared_.chatHistory["ALL"].push_back({senderName, body, ts, false});
                     }
                 }
                 // ONLINE_LIST: parse online users and build ID mapping
-                else if (raw.substr(0, 12) == "ONLINE_LIST:")
+                else if (raw.size() >= 12 && raw.substr(0, 12) == "ONLINE_LIST:")
                 {
                     std::string listContent = raw.substr(12);
                     shared_.usernameToID.clear();
@@ -111,10 +197,12 @@ void NetworkManagerClient::recvThread()
                     while (pos < listContent.size())
                     {
                         size_t hashPos = listContent.find('#', pos);
-                        if (hashPos == std::string::npos) break;
+                        if (hashPos == std::string::npos)
+                            break;
 
                         size_t dashPos = listContent.find(" - ", hashPos);
-                        if (dashPos == std::string::npos) break;
+                        if (dashPos == std::string::npos)
+                            break;
 
                         size_t commaPos = listContent.find(',', dashPos);
                         if (commaPos == std::string::npos)
@@ -130,20 +218,54 @@ void NetworkManagerClient::recvThread()
                         pos = commaPos + 1;
                     }
 
-                    shared_.chatHistory["__LIST__"].push_back({
-                        "System",
-                        "Online users updated: " + std::to_string(shared_.onlineUsers.size()) + " users",
-                        ts, false
-                    });
+                    // ── Backfill: fix any chat data stored under raw IDs before resolution ──
+                    // Move ID buckets to username buckets
+                    for (const auto& [id, name] : shared_.idToUsername)
+                    {
+                        auto it = shared_.chatHistory.find(id);
+
+                        if (it != shared_.chatHistory.end())
+                        {
+                            auto& dst = shared_.chatHistory[name];
+
+                            for (auto& msg : it->second)
+                            {
+                                if (msg.sender == id)
+                                    msg.sender = name;
+
+                                dst.push_back(std::move(msg));
+                            }
+
+                            shared_.chatHistory.erase(it);
+                        }
+                    }
+
+                    // Fix sender names everywhere
+                    for (auto& [bucket, msgs] : shared_.chatHistory)
+                    {
+                        for (auto& msg : msgs)
+                        {
+                            auto it = shared_.idToUsername.find(msg.sender);
+
+                            if (it != shared_.idToUsername.end())
+                                msg.sender = it->second;
+                        }
+                    }
+
+                    shared_.newDataReady = true;
+
+                    shared_.chatHistory["LIST"].push_back({"System",
+                                                               "Online users updated: " + std::to_string(shared_.onlineUsers.size()) + " users",
+                                                               ts, false});
                 }
                 // IMG ACK or server responses
-                else if (raw.find("IMG_ACK:") != std::string::npos || raw.substr(0, 8) == "[Server]")
+                else if (raw.size() >= 8 && (raw.find("IMG_ACK:") != std::string::npos || raw.substr(0, 8) == "[Server]"))
                 {
-                    shared_.chatHistory["ALL"].push_back({ "Server", raw, ts, false });
+                    shared_.chatHistory["ALL"].push_back({"Server", raw, ts, false});
                 }
                 else
                 {
-                    shared_.chatHistory["ALL"].push_back({ "Server", raw, ts, false });
+                    shared_.chatHistory["ALL"].push_back({"Server", raw, ts, false});
                 }
 
                 shared_.plotBuffer.push_back(value);
@@ -162,15 +284,13 @@ void NetworkManagerClient::recvThread()
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
         shared_.messageLog.push_back({"[-] Disconnected.", 0.0});
-        shared_.chatHistory["ALL"].push_back({
-            "System", "Disconnected from server.", 0.0, false
-        });
+        shared_.chatHistory["ALL"].push_back({"System", "Disconnected from server.", 0.0, false});
         shared_.newDataReady = true;
     }
 }
 
 // ── sendMessage — also writes into chatHistory ────────────────────
-void NetworkManagerClient::sendMessage(const std::string& message)
+void NetworkManagerClient::sendMessage(const std::string &message)
 {
     if (!shared_.connected || shared_.sock == INVALID_SOCKET)
     {
@@ -209,45 +329,40 @@ void NetworkManagerClient::sendMessage(const std::string& message)
         return;
     }
 
-    shared_.byteSent += retval;
+    shared_.byteSent.fetch_add(retval, std::memory_order_relaxed);
 
     double ts = std::chrono::duration<double>(
-        std::chrono::system_clock::now().time_since_epoch()
-    ).count();
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
 
     std::lock_guard<std::mutex> lock(shared_.mtx);
 
     // ── Route sent message into correct chat bucket ───────────────
-    if (message.substr(0, 7) == "TO:ALL ")
+    if (message.size() >= 7 && message.substr(0, 7) == "TO:ALL ")
     {
         std::string body = message.substr(7);
-        shared_.chatHistory["ALL"].push_back({
-            "You", body, ts, true
-        });
+        shared_.chatHistory["ALL"].push_back({"You", body, ts, true});
     }
-    else if (message.substr(0, 3) == "TO:")
+    else if (message.size() >= 3 && message.substr(0, 3) == "TO:")
     {
         // "TO:#2 hello"
-        size_t      space  = message.find(' ');
+        size_t space = message.find(' ');
         std::string target = message.substr(3, space - 3);
-        std::string body   = message.substr(space + 1);
+        std::string body = message.substr(space + 1);
 
         std::string displayName = target;
         auto it = shared_.idToUsername.find(target);
-        if (it != shared_.idToUsername.end()) {
+        if (it != shared_.idToUsername.end())
+        {
             displayName = it->second;
         }
 
-        shared_.chatHistory[displayName].push_back({
-            "You", body, ts, true
-        });
+        shared_.chatHistory[displayName].push_back({"You", body, ts, true});
     }
     else
     {
         // Raw message — goes to ALL
-        shared_.chatHistory["ALL"].push_back({
-            "You", message, ts, true
-        });
+        shared_.chatHistory["ALL"].push_back({"You", message, ts, true});
     }
 
     shared_.messageLog.push_back({"[You] " + message, ts});
@@ -255,7 +370,7 @@ void NetworkManagerClient::sendMessage(const std::string& message)
 }
 
 // ── setUsername — add system message to ALL chat ──────────────────
-void NetworkManagerClient::setUsername(const std::string& name)
+void NetworkManagerClient::setUsername(const std::string &name)
 {
     if (name.empty() || name.size() > 64)
     {
@@ -267,20 +382,26 @@ void NetworkManagerClient::setUsername(const std::string& name)
     if (shared_.connected && shared_.sock != INVALID_SOCKET)
     {
         std::string msg = "NAME:" + name + "\n";
-        ::send(shared_.sock, msg.c_str(),
-               static_cast<int>(msg.size()), 0);
+        int retval = ::send(shared_.sock, msg.c_str(),
+                            static_cast<int>(msg.size()), 0);
+        if (retval == SOCKET_ERROR)
+        {
+            int err = WSAGetLastError();
+            std::lock_guard<std::mutex> lock(shared_.mtx);
+            shared_.messageLog.push_back({"[ERR] Failed to send username (code " + std::to_string(err) + ")", 0.0});
+            shared_.newDataReady = true;
+            return;
+        }
     }
 
     double ts = std::chrono::duration<double>(
-        std::chrono::system_clock::now().time_since_epoch()
-    ).count();
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
 
     std::lock_guard<std::mutex> lock(shared_.mtx);
-    shared_.chatHistory["ALL"].push_back({
-        "System",
-        "Username set to: " + name,
-        ts, false
-    });
+    shared_.chatHistory["ALL"].push_back({"System",
+                                          "Username set to: " + name,
+                                          ts, false});
     shared_.newDataReady = true;
 }
 
@@ -288,16 +409,14 @@ void NetworkManagerClient::setUsername(const std::string& name)
 void NetworkManagerClient::sendWho()
 {
     double ts = std::chrono::duration<double>(
-        std::chrono::system_clock::now().time_since_epoch()
-    ).count();
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
 
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
-        shared_.chatHistory["ALL"].push_back({
-            "You",
-            shared_.username + " (this client)",
-            ts, true
-        });
+        shared_.chatHistory["ALL"].push_back({"You",
+                                              shared_.username + " (this client)",
+                                              ts, true});
         shared_.newDataReady = true;
     }
 
@@ -306,7 +425,7 @@ void NetworkManagerClient::sendWho()
 }
 
 // ── connect ───────────────────────────────────────────────────────
-void NetworkManagerClient::connect(const std::string& ip, int port)
+void NetworkManagerClient::connect(const std::string &ip, int port)
 {
     if (shared_.connected)
     {
@@ -336,7 +455,7 @@ void NetworkManagerClient::connect(const std::string& ip, int port)
 
     sockaddr_in serverAddr = {};
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port   = htons(port);
+    serverAddr.sin_port = htons(port);
 
     if (inet_pton(AF_INET, ip.c_str(), &serverAddr.sin_addr) != 1)
     {
@@ -349,7 +468,7 @@ void NetworkManagerClient::connect(const std::string& ip, int port)
     }
 
     if (::connect(shared_.sock,
-                  reinterpret_cast<sockaddr*>(&serverAddr),
+                  reinterpret_cast<sockaddr *>(&serverAddr),
                   sizeof(serverAddr)) == SOCKET_ERROR)
     {
         int err = WSAGetLastError();
@@ -361,19 +480,18 @@ void NetworkManagerClient::connect(const std::string& ip, int port)
         throw std::runtime_error("connect() failed: " + std::to_string(err));
     }
 
-    shared_.connected    = true;
+    shared_.connected = true;
     shared_.byteReceived = 0;
-    shared_.byteSent     = 0;
+    shared_.byteSent = 0;
 
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
-        shared_.messageLog.push_back({
-            "[+] Connected to " + ip + ":" + std::to_string(port), 0.0
-        });
+        shared_.messageLog.push_back({"[+] Connected to " + ip + ":" + std::to_string(port), 0.0});
         shared_.newDataReady = true;
     }
 
-    if (recv_thread_.joinable()) recv_thread_.join();
+    if (recv_thread_.joinable())
+        recv_thread_.join();
     recv_thread_ = std::thread(&NetworkManagerClient::recvThread, this);
 
     // Handshake: send identity and request online user list
@@ -388,9 +506,10 @@ void NetworkManagerClient::connect(const std::string& ip, int port)
 // ── disconnect ────────────────────────────────────────────────────
 void NetworkManagerClient::disconnect()
 {
-    if (!shared_.connected && !recv_thread_.joinable()) return;
+    if (!shared_.connected && !recv_thread_.joinable())
+        return;
 
-    shared_.running   = false;
+    shared_.running = false;
     shared_.connected = false;
 
     if (shared_.sock != INVALID_SOCKET)
@@ -399,15 +518,14 @@ void NetworkManagerClient::disconnect()
         shared_.sock = INVALID_SOCKET;
     }
 
-    if (recv_thread_.joinable())       recv_thread_.join();
-    if (send_image_thread_.joinable()) send_image_thread_.join();
-
-    shared_.running = true;
+    if (recv_thread_.joinable())
+        recv_thread_.join();
+    if (send_image_thread_.joinable())
+        send_image_thread_.join();
 }
 
-
 // ── sendImage (spawns background thread) ─────────────────────────
-void NetworkManagerClient::sendImage(const std::string& filepath)
+void NetworkManagerClient::sendImage(const std::string &target, const std::string &filepath)
 {
     if (!shared_.connected)
     {
@@ -429,13 +547,13 @@ void NetworkManagerClient::sendImage(const std::string& filepath)
         send_image_thread_.join();
 
     send_image_thread_ = std::thread(
-        &NetworkManagerClient::sendImageThread, this, filepath);
+        &NetworkManagerClient::sendImageThread, this, target, filepath);
 }
 
 // ── sendImageThread ───────────────────────────────────────────────
-void NetworkManagerClient::sendImageThread(const std::string& filepath)
+void NetworkManagerClient::sendImageThread(const std::string &target, const std::string &filepath)
 {
-    shared_.sendingImage    = true;
+    shared_.sendingImage = true;
     shared_.imgSendProgress = 0;
 
     // ── Open file ─────────────────────────────────────────────────
@@ -451,10 +569,21 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
 
     // ── Read entire file into buffer ──────────────────────────────
     std::streamsize fileSize = file.tellg();
+
+    const std::streamsize MAX_FILE_SIZE = 50 * 1024 * 1024;
+    if (fileSize < 0 || fileSize > MAX_FILE_SIZE)
+    {
+        std::lock_guard<std::mutex> lock(shared_.mtx);
+        shared_.messageLog.push_back({"[ERR] File too large or invalid (max 50MB).", 0.0});
+        shared_.newDataReady = true;
+        shared_.sendingImage = false;
+        return;
+    }
+
     file.seekg(0, std::ios::beg);
 
     std::vector<uint8_t> fileData(fileSize);
-    if (!file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+    if (!file.read(reinterpret_cast<char *>(fileData.data()), fileSize))
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
         shared_.messageLog.push_back({"[ERR] Failed to read file.", 0.0});
@@ -471,14 +600,12 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
         filename = filepath.substr(slash + 1);
 
     // ── Send header: "IMG:<filename>:<size>\n" ────────────────────
-    std::string header = "IMG:" + filename
-                       + ":" + std::to_string(fileSize) + "\n";
+    std::string header = "IMG:" + target + ":" + filename + ":" + std::to_string(fileSize) + "\n";
 
     int sent = ::send(
         shared_.sock,
         header.c_str(),
-        static_cast<int>(header.size()), 0
-    );
+        static_cast<int>(header.size()), 0);
 
     if (sent == SOCKET_ERROR)
     {
@@ -493,10 +620,7 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
 
     {
         std::lock_guard<std::mutex> lock(shared_.mtx);
-        shared_.messageLog.push_back({
-            "[IMG] Sending: " + filename
-            + " (" + std::to_string(fileSize) + " bytes)", 0.0
-        });
+        shared_.messageLog.push_back({"[IMG] Sending: " + filename + " (" + std::to_string(fileSize) + " bytes)", 0.0});
         shared_.newDataReady = true;
     }
 
@@ -505,14 +629,13 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
 
     while (totalSent < fileData.size() && shared_.connected)
     {
-        size_t remaining  = fileData.size() - totalSent;
-        size_t chunkSize  = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+        size_t remaining = fileData.size() - totalSent;
+        size_t chunkSize = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
 
         int result = ::send(
             shared_.sock,
-            reinterpret_cast<const char*>(fileData.data() + totalSent),
-            static_cast<int>(chunkSize), 0
-        );
+            reinterpret_cast<const char *>(fileData.data() + totalSent),
+            static_cast<int>(chunkSize), 0);
 
         if (result == SOCKET_ERROR)
         {
@@ -529,8 +652,7 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
 
         // Update progress 0-100
         shared_.imgSendProgress = static_cast<int>(
-            (totalSent * 100) / fileData.size()
-        );
+            (totalSent * 100) / fileData.size());
     }
 
     // ── Done ──────────────────────────────────────────────────────
@@ -539,23 +661,40 @@ void NetworkManagerClient::sendImageThread(const std::string& filepath)
         if (totalSent == fileData.size())
         {
             double ts = std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count();
-            shared_.chatHistory["ALL"].push_back({
-                "System",
-                "[+] File sent: " + filename,
-                ts, false
-            });
-            shared_.messageLog.push_back({
-                "[IMG] Sent successfully: " + filename, 0.0
-            });
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+            shared_.chatHistory["ALL"].push_back({"System",
+                                                  "[+] File sent: " + filename,
+                                                  ts, false});
+            shared_.messageLog.push_back({"[IMG] Sent successfully: " + filename, 0.0});
         }
         shared_.newDataReady = true;
     }
 
     shared_.imgSendProgress = 100;
-    shared_.sendingImage    = false;
+    shared_.sendingImage = false;
 
     printf("[sendImageThread] Done. Sent %zu / %lld bytes.\n",
            totalSent, (long long)fileSize);
+
+    {
+    std::lock_guard<std::mutex> lock(shared_.mtx);
+    double ts = std::chrono::duration<double>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+
+    // Resolve the network target ("#2") back to a display name ("Bob")
+    // so the sent-image bubble lands in the same bucket as the text DMs.
+
+    std::string bucket = target;
+    if (target != "ALL")
+    {
+        auto it = shared_.idToUsername.find(target);
+        if (it != shared_.idToUsername.end())
+            bucket = it->second;
+    }
+
+    shared_.chatHistory[bucket].push_back({"You", "[Image] " + filename, ts, true, true, filepath});
+    shared_.newDataReady = true;
+    }
 }

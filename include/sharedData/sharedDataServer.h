@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <thread>
 #include <winsock2.h>
 
 struct ClientInfo
@@ -38,7 +39,8 @@ struct SharedData
     std::vector<std::string> messageLog;
     std::vector<DataPoint>   plotBuffer;
     std::vector<ReceivedImage> imageList;   // ← add this
-    std::atomic<bool>        running            { true  };
+    std::vector<std::thread> workerThreads;  // Track all worker threads
+    std::atomic<bool>        running            { false };
     std::atomic<bool>        newDataReady       { false };
     std::atomic<int>         clientCount        { 0     };
     std::atomic<int>         nextClientID       { 1     };

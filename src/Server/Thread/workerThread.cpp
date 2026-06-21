@@ -6,21 +6,21 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
 #include <fstream>
 
 #define BUFSIZE 512
 
-static bool recvAll(SOCKET sock, uint8_t* buf, size_t size,
-                    std::atomic<bool>& running)
+static bool recvAll(SOCKET sock, uint8_t *buf, size_t size,
+                    std::atomic<bool> &running)
 {
     size_t received = 0;
     while (received < size && running)
     {
         int r = recv(sock,
-                     reinterpret_cast<char*>(buf + received),
+                     reinterpret_cast<char *>(buf + received),
                      static_cast<int>(size - received), 0);
-        if (r <= 0) return false;
+        if (r <= 0)
+            return false;
         received += r;
     }
     return received == size;
@@ -28,59 +28,122 @@ static bool recvAll(SOCKET sock, uint8_t* buf, size_t size,
 
 // ── Forward message to a specific client by ID ────────────────────
 static void forwardTo(int targetID, int senderID,
-                      const std::string& message,
-                      SharedData& shared)
+                      const std::string &message,
+                      SharedData &shared)
 {
     // Appends internal system formatting + the required packet boundary delimiter
-    std::string payload = "[Client #" + std::to_string(senderID)
-                        + " -> You] " + message + "\n";
+    std::string payload = "[Client #" + std::to_string(senderID) + " -> You] " + message + "\n";
 
-    for (const auto& c : shared.clientList)
+    for (const auto &c : shared.clientList)
     {
         if (c.id == targetID)
         {
-            ::send(c.sock, payload.c_str(),
-                   static_cast<int>(payload.size()), 0);
+            int retval = ::send(c.sock, payload.c_str(),
+                                static_cast<int>(payload.size()), 0);
+            if (retval == SOCKET_ERROR)
+            {
+                int err = WSAGetLastError();
+                std::lock_guard<std::mutex> lock(shared.mtx);
+                shared.messageLog.push_back(
+                    "[ERR] Forward to #" + std::to_string(targetID) +
+                    " failed (code " + std::to_string(err) + ")");
+            }
             return;
         }
     }
 }
 
+// Full-send helper to ensure all bytes are sent (handles partial sends)
+static bool sendAll(SOCKET sock, const char *data, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len)
+    {
+        int r = ::send(sock, data + sent, static_cast<int>(len - sent), 0);
+        if (r == SOCKET_ERROR)
+            return false;
+        sent += r;
+    }
+    return true;
+}
+
+// image-forwarding helper function to send image data to a specific client
+static void forwardImageTo(int targetID, int senderID,
+                           const std::string &filename,
+                           const std::vector<uint8_t> &data,
+                           const std::string &scope,
+                           SharedData &shared)
+{
+    std::string header = "IMG:#" + std::to_string(senderID) + ":" + scope + ":" + filename + ":" + std::to_string(data.size()) + "\n";
+
+    for (const auto &c : shared.clientList)
+    {
+        if (c.id != targetID)
+            continue;
+        if (!sendAll(c.sock, header.c_str(), header.size()) ||
+            !sendAll(c.sock, reinterpret_cast<const char *>(data.data()), data.size()))
+        {
+            shared.messageLog.push_back(
+                "[ERR] Image forward to #" + std::to_string(targetID) + " failed");
+        }
+        return;
+    }
+}
+
 // ── Build WHO response ─────────────────────────────────────────────
-static std::string buildWhoResponse(SharedData& shared)
+static std::string buildWhoResponse(SharedData &shared)
 {
     std::string resp = "[Server] Connected clients:\n";
-    for (const auto& c : shared.clientList)
+    for (const auto &c : shared.clientList)
     {
         std::string name = c.username.empty()
-                         ? "Client" : c.username;
-        resp += "  #" + std::to_string(c.id)
-              + " " + name
-              + " (" + c.ip
-              + ":" + std::to_string(c.port) + ")\n";
+                               ? "Client"
+                               : c.username;
+        resp += "  #" + std::to_string(c.id) + " " + name + " (" + c.ip + ":" + std::to_string(c.port) + ")\n";
     }
     return resp;
 }
 
+void broadcastOnlineList(SharedData& shared)
+{
+    std::vector<ClientInfo> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(shared.mtx);
+        snapshot = shared.clientList;
+    }
+
+    std::string listMsg = "ONLINE_LIST:";
+    for (size_t i = 0; i < snapshot.size(); ++i)
+    {
+        const auto& c = snapshot[i];
+        std::string name = c.username.empty() ? "Client" + std::to_string(c.id) : c.username;
+        listMsg += "#" + std::to_string(c.id) + " - " + name;
+        if (i + 1 < snapshot.size()) listMsg += ",";
+    }
+    listMsg += "\n";
+
+    for (const auto& c : snapshot)
+        ::send(c.sock, listMsg.c_str(), static_cast<int>(listMsg.size()), 0);
+}
+
 void workerThread(SOCKET sock, sockaddr_in clientAddr,
-                  int clientID, SharedData& shared)
+                  int clientID, SharedData &shared)
 {
     char addrStr[INET_ADDRSTRLEN] = {};
     inet_ntop(AF_INET, &clientAddr.sin_addr, addrStr, sizeof(addrStr));
     int port = ntohs(clientAddr.sin_port);
-    std::string tag = "#" + std::to_string(clientID)
-                    + " " + std::string(addrStr)
-                    + ":" + std::to_string(port);
+    std::string tag = "#" + std::to_string(clientID) + " " + std::string(addrStr) + ":" + std::to_string(port);
 
     char buf[BUFSIZE];
-    std::string accumulationBuffer = ""; 
+    std::string accumulationBuffer = "";
 
     while (shared.running)
     {
         int retval = recv(sock, buf, sizeof(buf), 0);
-        if (retval == SOCKET_ERROR || retval == 0) break;
+        if (retval == SOCKET_ERROR || retval == 0)
+            break;
 
-        shared.packetAccum++;
+        shared.packetAccum.fetch_add(1, std::memory_order_relaxed);
         accumulationBuffer.append(buf, retval);
 
         // Process bytes out of our stream buffer
@@ -92,72 +155,89 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
             // ── CASE 1: IMAGE PAYLOAD HANDOFF ────────────────────────────────
             if (msg.substr(0, 4) == "IMG:")
             {
-                // msg string format: "IMG:filename.ext:size"
-                size_t firstColon  = msg.find(':', 4);          // Finds separator after filename
-                size_t headerTotalLength = newlinePos + 1;      // Total bytes including '\n'
+                // New format: IMG:<target>:<filename>:<size>
+                size_t c1 = msg.find(':', 4);
+                size_t c2 = (c1 == std::string::npos) ? std::string::npos : msg.find(':', c1 + 1);
+                size_t headerTotalLength = newlinePos + 1;
 
-                if (firstColon == std::string::npos)
+                if (c1 == std::string::npos || c2 == std::string::npos)
                 {
-                    // Malformed protocol header frame, clear it out to prevent infinite loops
                     accumulationBuffer.erase(0, headerTotalLength);
                     continue;
                 }
 
-                std::string filename = msg.substr(4, firstColon - 4);
-                
+                std::string target = msg.substr(4, c1 - 4);
+                std::string filename = msg.substr(c1 + 1, c2 - c1 - 1);
+
                 size_t fileSize = 0;
-                try {
-                    fileSize = std::stoull(msg.substr(firstColon + 1));
+                try
+                {
+                    fileSize = std::stoull(msg.substr(c2 + 1));
                 }
-                catch (...) {
-                    // Size parsing failed
+                catch (...)
+                {
                     accumulationBuffer.erase(0, headerTotalLength);
                     continue;
                 }
 
-                // Check if the full binary segment has reached our user-space stream buffer yet
-                if (accumulationBuffer.size() < headerTotalLength + fileSize)
-                {
-                    // Fragmentation hit! The stream is missing bytes.
-                    // Break out of processing and let the main recv loop pull more data.
-                    break; 
-                }
-
-                // Extract binary payload out of stream string container
-                const uint8_t* rawBinaryDataPtr = reinterpret_cast<const uint8_t*>(accumulationBuffer.data() + headerTotalLength);
-                std::vector<uint8_t> fileData(rawBinaryDataPtr, rawBinaryDataPtr + fileSize);
-
-                // Process/Save Binary File Data ──────────────────
-                std::filesystem::create_directories("Images");
-
-                std::ofstream outfile(
-                    std::filesystem::path("Images") / filename, 
-                    std::ios::binary);
-
-                outfile.write(
-                    reinterpret_cast<const char*>(fileData.data()), 
-                    static_cast<std::streamsize>(fileSize)
-                );
-                
-                outfile.close();
-
-                // Drop both text header and binary block from the stream buffer entirely
-                accumulationBuffer.erase(0, headerTotalLength + fileSize);
-
+                const size_t MAX_FILE_SIZE = 50 * 1024 * 1024;
+                if (fileSize > MAX_FILE_SIZE)
                 {
                     std::lock_guard<std::mutex> lock(shared.mtx);
-                    shared.messageLog.push_back(
-                        "[IMG] Received file from #" + std::to_string(clientID) + 
-                        ": " + filename + " (" + std::to_string(fileSize) + " bytes)"
-                    );
+                    shared.messageLog.push_back("[ERR] File too large from #" + std::to_string(clientID));
+                    shared.newDataReady = true;
+                    accumulationBuffer.erase(0, headerTotalLength);
+                    continue;
+                }
+                if (accumulationBuffer.size() < headerTotalLength + fileSize)
+                    break; // wait for more bytes
+
+                const uint8_t *rawPtr = reinterpret_cast<const uint8_t *>(accumulationBuffer.data() + headerTotalLength);
+                std::vector<uint8_t> fileData(rawPtr, rawPtr + fileSize);
+                accumulationBuffer.erase(0, headerTotalLength + fileSize);
+
+                // ── Relay ──────────────────────────────────────────────
+                {
+                    std::lock_guard<std::mutex> lock(shared.mtx);
+
+                    if (target == "ALL")
+                    {
+                        for (const auto &c : shared.clientList)
+                            if (c.id != clientID)
+                                forwardImageTo(c.id, clientID, filename, fileData, "ALL", shared);
+
+                        shared.messageLog.push_back("[IMG] #" + std::to_string(clientID) +
+                                                    " -> ALL: " + filename + " (" + std::to_string(fileSize) + " bytes)");
+                    }
+                    else if (!target.empty() && target[0] == '#')
+                    {
+                        try
+                        {
+                            int targetID = std::stoi(target.substr(1));
+                            forwardImageTo(targetID, clientID, filename, fileData, "DM", shared);
+                            shared.messageLog.push_back("[IMG] #" + std::to_string(clientID) +
+                                                        " -> #" + std::to_string(targetID) + ": " + filename);
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
+
+                    for (auto &c : shared.clientList)
+                        if (c.sock == sock)
+                        {
+                            c.imgCount++;
+                            break;
+                        }
+
                     shared.newDataReady = true;
                 }
 
-                // Send back protocol verification ACK
+                // ACK back to sender
                 std::string ack = "IMG_ACK:" + filename + "\n";
-                ::send(sock, ack.c_str(), static_cast<int>(ack.size()), 0);
+                sendAll(sock, ack.c_str(), ack.size());
 
-                continue; // Run the loop check again on remaining buffer elements
+                continue;
             }
 
             // ── CASE 2: TEXT MESSAGE / STRUCTURAL CONTROL PACKETS ────────────
@@ -172,21 +252,22 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
 
                 if (!newName.empty())
                 {
-                    std::lock_guard<std::mutex> lock(shared.mtx);
-                    for (auto& c : shared.clientList)
                     {
-                        if (c.sock == sock)
+                        std::lock_guard<std::mutex> lock(shared.mtx);
+                        for (auto &c : shared.clientList)
                         {
-                            std::string old = c.username;
-                            c.username = newName;
-                            shared.messageLog.push_back(
-                                "[~] Client #" + std::to_string(clientID)
-                                + " renamed: " + old + " -> " + newName
-                            );
-                            break;
+                            if (c.sock == sock)
+                            {
+                                std::string old = c.username;
+                                c.username = newName;
+                                shared.messageLog.push_back(
+                                    "[~] Client #" + std::to_string(clientID) + " renamed: " + old + " -> " + newName);
+                                break;
+                            }
                         }
+                        shared.newDataReady = true;
                     }
-                    shared.newDataReady = true;
+                    broadcastOnlineList(shared); 
                 }
                 continue;
             }
@@ -197,10 +278,17 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 std::string resp;
                 {
                     std::lock_guard<std::mutex> lock(shared.mtx);
-                    resp = buildWhoResponse(shared); 
+                    resp = buildWhoResponse(shared);
                 }
                 // Pre-formatted with its own trailing \n from buildWhoResponse
-                ::send(sock, resp.c_str(), static_cast<int>(resp.size()), 0);
+                int ret = ::send(sock, resp.c_str(), static_cast<int>(resp.size()), 0);
+                if (ret == SOCKET_ERROR)
+                {
+                    int err = WSAGetLastError();
+                    std::lock_guard<std::mutex> lock(shared.mtx);
+                    shared.messageLog.push_back(
+                        "[ERR] Failed to send WHO response (code " + std::to_string(err) + ")");
+                }
                 continue;
             }
 
@@ -211,22 +299,37 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 if (space == std::string::npos)
                 {
                     std::string err = "[Server] Usage: TO:#<id> <message>\n";
-                    ::send(sock, err.c_str(), static_cast<int>(err.size()), 0);
+                    int ret = ::send(sock, err.c_str(), static_cast<int>(err.size()), 0);
+                    if (ret == SOCKET_ERROR)
+                    {
+                        int errno_val = WSAGetLastError();
+                        std::lock_guard<std::mutex> lock(shared.mtx);
+                        shared.messageLog.push_back(
+                            "[ERR] Failed to send error message (code " + std::to_string(errno_val) + ")");
+                    }
                     continue;
                 }
 
-                std::string target  = msg.substr(3, space - 3); 
-                std::string payload = msg.substr(space + 1);    
+                std::string target = msg.substr(3, space - 3);
+                std::string payload = msg.substr(space + 1);
 
                 if (target == "ALL")
                 {
                     std::lock_guard<std::mutex> lock(shared.mtx);
                     std::string fwd = "[Client #" + std::to_string(clientID) + " -> ALL] " + payload + "\n";
 
-                    for (const auto& c : shared.clientList)
+                    for (const auto &c : shared.clientList)
                     {
-                        if (c.id == clientID) continue; 
-                        ::send(c.sock, fwd.c_str(), static_cast<int>(fwd.size()), 0);
+                        if (c.id == clientID)
+                            continue;
+                        int ret = ::send(c.sock, fwd.c_str(), static_cast<int>(fwd.size()), 0);
+                        if (ret == SOCKET_ERROR)
+                        {
+                            int err = WSAGetLastError();
+                            shared.messageLog.push_back(
+                                "[ERR] Failed to relay to #" + std::to_string(c.id) +
+                                " (code " + std::to_string(err) + ")");
+                        }
                     }
 
                     shared.messageLog.push_back("[RELAY ALL] #" + std::to_string(clientID) + " -> ALL: " + payload);
@@ -234,7 +337,8 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 }
                 else if (target[0] == '#')
                 {
-                    try {
+                    try
+                    {
                         int targetID = std::stoi(target.substr(1));
                         std::lock_guard<std::mutex> lock(shared.mtx);
                         forwardTo(targetID, clientID, payload, shared);
@@ -242,7 +346,8 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                         shared.messageLog.push_back("[RELAY] #" + std::to_string(clientID) + " -> #" + std::to_string(targetID) + ": " + payload);
                         shared.newDataReady = true;
                     }
-                    catch(...) {
+                    catch (...)
+                    {
                         std::string err = "[Server] Invalid Target ID format.\n";
                         ::send(sock, err.c_str(), static_cast<int>(err.size()), 0);
                     }
@@ -257,21 +362,29 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
 
             // ── Normal message — Broadcast to ALL + log ──────────────────────
             double ts = std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count();
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
 
             double value = 0.0;
-            try   { value = std::stod(msg); }
-            catch (...) { value = static_cast<double>(msg.size()); }
+            try
+            {
+                value = std::stod(msg);
+            }
+            catch (...)
+            {
+                value = static_cast<double>(msg.size());
+            }
 
             {
                 std::lock_guard<std::mutex> lock(shared.mtx);
-                shared.plotBuffer.push_back({ ts, value, clientID });
-                
+                shared.plotBuffer.push_back({ts, value, clientID});
+
                 // Get the sender's current username or fall back to default tag
                 std::string senderName = "Client #" + std::to_string(clientID);
-                for (const auto& c : shared.clientList) {
-                    if (c.sock == sock && !c.username.empty()) {
+                for (const auto &c : shared.clientList)
+                {
+                    if (c.sock == sock && !c.username.empty())
+                    {
                         senderName = c.username;
                         break;
                     }
@@ -281,22 +394,27 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
                 std::string broadcastPayload = "[" + senderName + " -> ALL] " + msg + "\n";
 
                 // Loop through and relay it to ALL connected clients (including/excluding sender as preferred)
-                for (const auto& c : shared.clientList)
+                for (const auto &c : shared.clientList)
                 {
                     // If you want to echo back to sender too, remove the 'if' guard line below
-                    if (c.id == clientID) continue; 
+                    if (c.id == clientID)
+                        continue;
                     ::send(c.sock, broadcastPayload.c_str(), static_cast<int>(broadcastPayload.size()), 0);
                 }
 
                 shared.messageLog.push_back("[BROADCAST] " + senderName + ": " + msg);
-                for (auto& c : shared.clientList)
-                    if (c.sock == sock) { c.msgCount++; break; }
-                
+                for (auto &c : shared.clientList)
+                    if (c.sock == sock)
+                    {
+                        c.msgCount++;
+                        break;
+                    }
+
                 shared.newDataReady = true;
             }
 
             std::string echoStr = msg + "\n";
-            ::send(sock, echoStr.c_str(), static_cast<int>(echoStr.size()), 0);   
+            ::send(sock, echoStr.c_str(), static_cast<int>(echoStr.size()), 0);
         }
     }
 
@@ -307,13 +425,14 @@ void workerThread(SOCKET sock, sockaddr_in clientAddr,
             std::remove_if(
                 shared.clientList.begin(),
                 shared.clientList.end(),
-                [sock](const ClientInfo& c){ return c.sock == sock; }
-            ),
-            shared.clientList.end()
-        );
+                [sock](const ClientInfo &c)
+                { return c.sock == sock; }),
+            shared.clientList.end());
         shared.messageLog.push_back("[-] Client " + tag + " disconnected");
         shared.newDataReady = true;
     }
+
+    broadcastOnlineList(shared);
 
     shared.clientCount--;
     closesocket(sock);

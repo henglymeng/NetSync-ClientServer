@@ -63,11 +63,16 @@ void acceptThread(SOCKET listen_sock, SharedData& shared)
             shared.newDataReady = true;
         }
 
-        shared.clientCount++;
+        broadcastOnlineList(shared);   // tell everyone a new client joined
+
+        shared.clientCount.fetch_add(1, std::memory_order_relaxed);
 
         // ── Spawn dedicated worker ────────────────────────────────
-        std::thread(workerThread, client_sock, clientAddr, id,
-                    std::ref(shared)).detach();
+        {
+            std::lock_guard<std::mutex> lock(shared.mtx);
+            shared.workerThreads.emplace_back(workerThread, client_sock, clientAddr, id,
+                                              std::ref(shared));
+        }
     }
 
     printf("[acceptThread] Exiting.\n");

@@ -19,17 +19,18 @@ struct ChatMessage
     std::string body;       // actual message text
     double      timestamp;
     bool        isOwn;      // true = right-align in chat
-
+    bool        isImage     =   false;    // true if this message represents an image (for future use)
+    std::string imagePath   =   ""; // if isImage is true, this holds the filename of the image
 };
 
 struct SharedDataClient
 {
     std::mutex                               mtx;
     std::vector<ReceivedMessage>             messageLog;
-    std::vector<float>                       plotBuffer;
+    std::vector<float>                       plotBuffer;    // timestamps and values of received packets for plotting
     std::map<std::string,
-             std::vector<ChatMessage>>       chatHistory;  // ← add
-    std::vector<std::string>                 onlineUsers;
+             std::vector<ChatMessage>>       chatHistory;   // key = "ALL", "#2", etc.
+    std::vector<std::string>                 onlineUsers;   // List of usernames currently online
     std::map<std::string, std::string>       usernameToID;  // username → "#N"
     std::map<std::string, std::string>       idToUsername;  // "#N" → username
     std::atomic<bool>                        running        { true  };

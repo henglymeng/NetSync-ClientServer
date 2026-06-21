@@ -42,7 +42,6 @@ int main()
     SharedData shared;
 
     NetworkManager networkManager(shared, SERVERPORT);
-    networkManager.start();
 
     GUI(shared, networkManager);
 
